@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Vinnovas öppna data</title>
+    <style>
+        span.beskrivning {
+            color: darkgreen;
+            font-style: italic;
+        }
+    </style>
+    <base href="/api/">
+</head>
+<body>
+    <img src="info/Vinnova.png" />
+    <br />
+        <h1>Vinnovas öppna data</h1>
+        <a href=".">Vinnovas alla APIer för öppen data</a>
+    <h2>Ansökningsomgångar</h2>
+
+    <p>
+        För att hämta ansökningsomgångar används antingen diarienummer på formatet: [åååå-nnnnn] (år-löpnummer), eller ett från occ med-datum på formatet [åååå-mm-dd].<br />
+        <b>Exempel på url</b>
+        <br />
+        Hämta alla ansökningsomgångar ändrade 2019-09-01 eller senare: "data.vinnova.se/api/ansokningsomgangar/2019-09-01"<br />
+        Hämta utvalda ansökningsomgångar genom att använda kommaseparerad lista med diarienummer på ansökningsomgångar: "data.vinnova.se/api/ansokningsomgangar/2016-01034,2016-01035,…"
+    </p>
+    <h3>Versioner av api’et</h3>
+        Dagens version är v2.1
+        i version 2.1 tillkom fälten "Lang" och "Primary" för dokumenten. Det tillkom även en lista med tvåspråkiga webbtexter. För närvarande 3 st<br />
+        <b>Tidigare versioner av APIet för ansökningsomgångar</b><br />
+
+        v2.0. För att hämta v2.0 måste header "Accept" med värdet "application/vnd.vinnova.opendata.2.0+json" skickas med till APIet.<br />
+        Ingen v1 finns tillgänglig.
+    <h3>Excempel på Json</h3>
+    <p>
+        <span>
+            [<br />{<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Diarienummer":</span><span class="string">"2016-04968"</span>,<span class="beskrivning">&nbsp;(Diarienummer = ärendets identitet.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"DiarienummerUtlysning":</span><span class="string">"2016-04962"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Titel":</span><span class="string">"Innovationer för ett hållbart samhälle: miljö och transport  - 2017"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Beskrivning":</span><span class="string">"Innovationer för ett hållbart samhälle: miljö och transport  - 2017"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TitelEngelska":</span><span class="string">"x"</span>,<span class="beskrivning">&nbsp;(Används vid internationell inriktning.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"BeskrivningEngelska":</span><span class="string">"x"</span>,<span class="beskrivning">&nbsp;(Används vid internationell inriktning.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Oppningsdatum":</span><span class="string">"2016-12-20T00:00:00"</span>,<span class="beskrivning">&nbsp;(Tidpunkt då en ansökan tidigast kan påbörjas.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Stangningsdatum":</span><span class="string">"2017-03-02T14:00:00"</span>,<span class="beskrivning">&nbsp;(Tidpunkt när ansökan måste vara klarmarkerad för att läsas in till Vinnova.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"DagligAvlasning":</span><span class="number">0</span>,<span class="beskrivning">&nbsp;(0 eller 1. 1 indikerar att ansökningar inom denna ansökningsomgång sugs in varje dag till Vinnova.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"AvlasningstillfalleLista":</span>[],<span class="beskrivning">&nbsp;(Lista med tillfällen, förutom stängningsdatumet, då Vinnova läser in klarmarkerade ansökningar.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"UppskattatBeslutsdatum":</span><span class="null">null</span>,<span class="beskrivning">&nbsp;(Kan vara null.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TidigastProjektstart":</span><span class="null">null</span>,<span class="beskrivning">&nbsp;(Kan vara null.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"SenastProjektstart":</span><span class="null">null</span>,<span class="beskrivning">&nbsp;(Kan vara null.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"SenastProjektslut":</span><span class="null">null</span>,<span class="beskrivning">&nbsp;(Kan vara null.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"DokumentLista":</span>[<br /><span class="beskrivning">&nbsp;(lista med dokument som finns tillgängliga att ladda ner. Kan vara tom.)</span>
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Titel":</span><span class="string">"Projektbeskrivning - mall"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Beskrivning":</span><span class="string">"Projektbeskrivning - mall"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"FileName":</span><span class="string">"Mall Ansökningar IHS 2017.docx(771514).docx"</span>,<span class="beskrivning">&nbsp;(Filnamn vid skapande av filen hos Vinnova.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"DokumentID":</span><span class="string">"2016-04968_2"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"fileURL":</span><span class="string"><a href='https://data.vinnova.se/api/file/2016-04968_2'>https://data.vinnova.se/api/file/2016-04968_2</a></span>,<span class="beskrivning">&nbsp;(Aktuell sökväg till api’t för att öppna dokumentet.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Lang":</span><span class="string">"En"</span>,<span class="beskrivning">&nbsp;(Sv=Svenska, En=Engelska. null=ej specifiserat.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Primary":</span><span class="string">false</span>,<span class="beskrivning">&nbsp;(Anger om dokumentet är det primära för denna utlysning. Det kan finnas ett primärt per språk.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}],<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"LankLista":</span>[<span class="beskrivning">&nbsp;(Lista med länkar till eventuella informationssidor & ansökningslänk.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Beskrivning":</span><span class="string">"Ansök här"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"URL":</span><span class="string"><a href='https://etjanster.vinnova.se/DynFormNet/CreateForm.aspx?BaseType=ansokan&request=2227'>https://etjanster.vinnova.se/DynFormNet/CreateForm.aspx?BaseType=ansokan&request=2227</a></span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}],<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"KontaktLista":</span>[],<span class="beskrivning">&nbsp;(Lista med kontaktpersoner inom ansökningsomgången.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Publik":</span><span class="number">1</span>,<span class="beskrivning">&nbsp;(1=Visas i etjänstens gränssnitt, 0= endast inbjudna kan söka.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Webbsida":</span><span class="number">1</span>,<span class="beskrivning">&nbsp;(1= det ska skapas en sida för ansökningsomgången på vinnova.se, 0= ingen sida på vinnova.se.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"AnnonseringslägeÅr":</span><span class="null">null</span>,<span class="beskrivning">&nbsp;(Innan en ansökningsomgång är definitiv kan den annonseras med år och period då man antar att den kommer att öppna. När ansökningsomgången är i annonseringsläge är de flesta andra fält tomma. När ansökningsomgången är definitiv blir dessa 2 fält tomma.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"AnnonseringslägePeriod":</span><span class="null">null</span>,<span class="beskrivning">&nbsp;(Se ovan. Period är i dagsläget månadsnamn, men kan komma att vara i stil med Våren eller Q3.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"Extern":</span><span class="number">0</span>,<span class="beskrivning">&nbsp;(1=ansökan skickas inte in till Vinnova utan till någon annan. Vinnova agerar bara ”anslagstavla”. 0 = ansökningarna skickas in till Vinnova via Vinnovas etjänst.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"WebTextLista":</span>[<span class="beskrivning">&nbsp;(Lista med korta texter om: 1: Vad, 2: Vem, 3: Hur och ev 4: Varför.)</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextID":</span><span class="string">"1"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextSv":</span><span class="string">"Utvecklings- och forskningsprojekt som bidrar till att förnya svenskt näringsliv och samhälle samt stärker aktörers förmåga att möta transport- och miljöpolitiska utmaningar."</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextEn":</span><span class="string">"Utvecklings- och forskningsprojekt som bidrar till att förnya svenskt näringsliv och samhälle samt stärker aktörers förmåga att möta transport- och miljöpolitiska utmaningar."</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;},<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextID":</span><span class="string">"2"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextSv":</span><span class="string">"Juridiska personer som är verksamma inom miljö- eller transportområdet. Minst en av projektparterna måste vara en forskningsorganisation."</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextEn":</span><span class="string">"Juridiska personer som är verksamma inom miljö- eller transportområdet. Minst en av projektparterna måste vara en forskningsorganisation."</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;},<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextID":</span><span class="string">"3"</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextSv":</span><span class="string">"Budget för hela erbjudandet är 50 miljoner kronor. Med detta vill vi finansiera 15-20 projekt."</span>,<br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="key">"TextEn":</span><span class="string">"Budget för hela erbjudandet är 50 miljoner kronor. Med detta vill vi finansiera 15-20 projekt."</span><br />
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;}]<br />
+            }]
+        </span>
+    </p>
+</body>
+</html>
