@@ -9,30 +9,8 @@ A GitHub Pages website that tracks active funding calls from [Vinnova](https://w
 - The static `index.html` reads `data.json` and renders a searchable, filterable card grid
 - Search by keyword, sort by deadline, filter by urgency (closing soon / rolling)
 
-## Setup (5 minutes)
 
-### 1. Create the repo
-
-```bash
-# Option A: Use this as a template on GitHub
-# Option B: Push manually
-git init
-git add .
-git commit -m "init"
-git remote add origin https://github.com/YOUR_USERNAME/vinnova-funding.git
-git push -u origin main
-```
-
-### 2. Enable GitHub Pages
-
-1. Go to your repo → **Settings** → **Pages**
-2. Source: **Deploy from a branch**
-3. Branch: `main` / root (`/`)
-4. Click **Save**
-
-Your site will be live at `https://YOUR_USERNAME.github.io/vinnova-funding/`
-
-### 3. Run the Action for the first time
+ Run the Action for the first time
 
 1. Go to **Actions** tab in your repo
 2. Click **Fetch Vinnova Funding Data**
