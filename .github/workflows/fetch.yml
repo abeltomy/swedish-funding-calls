@@ -21,17 +21,23 @@ jobs:
       # ── Vinnova ────────────────────────────────────────────────────────────
       - name: Fetch Vinnova API
         run: |
+          curl -fsSL \
+            -H "Accept: application/json" \
+            -A "Mozilla/5.0" \
+            --compressed \
+            "https://data.vinnova.se/api/ansokningsomgangar/" \
+            -o vinnova_api.json
+          echo "Vinnova raw: $(wc -c < vinnova_api.json) bytes"
           python3 - <<'PYEOF'
-          import requests, json, datetime
+          import json, datetime
 
           today = datetime.date.today().isoformat()
+          raw = []
           try:
-              r = requests.get("https://data.vinnova.se/api/ansokningsomgangar/",
-                               headers={"Accept": "application/json"}, timeout=30)
-              r.raise_for_status()
-              raw = r.json()
+              with open("vinnova_api.json", encoding="utf-8") as f:
+                  raw = json.load(f)
           except Exception as e:
-              print(f"Vinnova API error: {e}")
+              print(f"Vinnova parse error: {e}")
               raw = []
 
           items = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
@@ -106,9 +112,13 @@ jobs:
 
               soup = BeautifulSoup(r.text, "lxml")
               found = 0
-              for a in soup.select("a[href*='/utlysningar/']"):
+              all_links = soup.find_all("a", href=True)
+              print(f"  Page {page}: {len(all_links)} total links found")
+              for a in all_links:
                   href = a.get("href", "")
-                  if not href or href.rstrip("/") in ("/utlysningar", "") \
+                  if "/utlysningar/" not in href:
+                      continue
+                  if href.rstrip("/") in ("/utlysningar", "") \
                           or "?" in href or "#" in href:
                       continue
                   full_url = (BASE + href) if href.startswith("/") else href
