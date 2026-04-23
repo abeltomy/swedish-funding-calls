@@ -345,36 +345,29 @@ jobs:
           print(f"  TOTAL:           {len(all_calls)}")
           PYEOF
 
-      - name: Translate Swedish titles and descriptions to English
+      - name: Translate Swedish titles to English
         run: |
           python3 - <<'PYEOF'
-          import json, time
+          import json
           from deep_translator import GoogleTranslator
-
-          def sv_to_en(text):
-              if not text or not text.strip():
-                  return text
-              try:
-                  return GoogleTranslator(source='sv', target='en').translate(text[:4999])
-              except Exception as e:
-                  print(f"  translate warning: {e}")
-                  return text
 
           with open("data.json", encoding="utf-8") as f:
               data = json.load(f)
 
-          translated = 0
-          for call in data["calls"]:
-              if call.get("title_en"):
-                  continue  # already have English title (Vinnova TitelEn, Formas)
-              title_en = sv_to_en(call["title"])
-              desc_en  = sv_to_en(call.get("description",""))
-              call["title_en"]    = title_en
-              call["description"] = desc_en
-              translated += 1
-              time.sleep(0.3)  # stay well within free-tier rate limits
-
-          print(f"✓ Translated {translated} items to English")
+          indices = [i for i, c in enumerate(data["calls"]) if not c.get("title_en")]
+          if indices:
+              titles = [data["calls"][i]["title"][:499] for i in indices]
+              try:
+                  translated = GoogleTranslator(source='sv', target='en').translate_batch(titles)
+                  for i, t in zip(indices, translated):
+                      data["calls"][i]["title_en"] = t or data["calls"][i]["title"]
+                  print(f"✓ Translated {len(indices)} titles in one batch call")
+              except Exception as e:
+                  print(f"Batch translation failed: {e}")
+                  for i in indices:
+                      data["calls"][i]["title_en"] = data["calls"][i]["title"]
+          else:
+              print("✓ All titles already in English")
 
           with open("data.json","w",encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
