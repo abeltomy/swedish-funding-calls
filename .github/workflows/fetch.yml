@@ -23,10 +23,15 @@ jobs:
 
       - name: Fetch Vinnova API
         run: |
-          curl -s "https://data.vinnova.se/api/ansokningsomgangar/" \
+          HTTP_CODE=$(curl -s -w "%{http_code}" \
             -H "Accept: application/json" \
-            -o vinnova_raw.json
-          echo "Vinnova raw: $(wc -c < vinnova_raw.json) bytes"
+            "https://data.vinnova.se/api/ansokningsomgangar/" \
+            -o vinnova_raw.json)
+          echo "Vinnova HTTP $HTTP_CODE, $(wc -c < vinnova_raw.json) bytes"
+          if [ "$HTTP_CODE" != "200" ] || [ ! -s vinnova_raw.json ]; then
+            echo "[]" > vinnova_raw.json
+            echo "Warning: Vinnova API unavailable (HTTP $HTTP_CODE), using empty fallback"
+          fi
 
       - name: Scrape Energimyndigheten
         run: |
@@ -251,9 +256,13 @@ jobs:
           today = datetime.date.today().isoformat()
 
           # ── Vinnova ──────────────────────────────────────────────
-          with open("vinnova_raw.json", encoding="utf-8") as f:
-              raw = json.load(f)
-          calls_v = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
+          try:
+              with open("vinnova_raw.json", encoding="utf-8") as f:
+                  raw = json.load(f)
+              calls_v = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
+          except Exception as e:
+              print(f"Warning: could not parse vinnova_raw.json: {e}")
+              calls_v = []
           vinnova_calls = []
           for c in calls_v:
               status = (c.get("Status") or c.get("status") or "").strip()
