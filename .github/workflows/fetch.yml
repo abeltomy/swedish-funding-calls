@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Python deps
-        run: pip install requests beautifulsoup4 lxml playwright --quiet
+        run: pip install requests beautifulsoup4 lxml playwright deep-translator --quiet
 
       - name: Install Playwright browsers
         run: python -m playwright install chromium --with-deps
@@ -32,6 +32,25 @@ jobs:
             echo "[]" > vinnova_raw.json
             echo "Warning: Vinnova API unavailable (HTTP $HTTP_CODE), using empty fallback"
           fi
+
+      - name: Debug Vinnova API structure
+        run: |
+          python3 - <<'PYEOF'
+          import json
+          try:
+              with open("vinnova_raw.json", encoding="utf-8") as f:
+                  raw = json.load(f)
+              items = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
+              print(f"Top-level type: {type(raw).__name__}")
+              if isinstance(raw, dict):
+                  print(f"Top-level keys: {list(raw.keys())}")
+              print(f"Total items: {len(items)}")
+              if items:
+                  print("First item keys:", list(items[0].keys()))
+                  print(json.dumps(items[0], indent=2, ensure_ascii=False)[:800])
+          except Exception as e:
+              print(f"Debug error: {e}")
+          PYEOF
 
       - name: Scrape Energimyndigheten
         run: |
@@ -63,7 +82,8 @@ jobs:
                   full_url = (BASE + href) if href.startswith("/") else href
                   if full_url in seen: continue
                   seen.add(full_url)
-                  title = a.get_text(" ", strip=True)
+                  h = a.find(["h1","h2","h3","h4","h5","h6"])
+                  title = h.get_text(" ", strip=True) if h else (a.get_text(" ", strip=True).splitlines()[0].strip())
                   if not title or len(title) < 8: continue
                   container = a
                   for _ in range(4):
@@ -81,7 +101,7 @@ jobs:
                       if kw in ct: cat = kw; break
                   if closes_iso and closes_iso < today: continue
                   calls.append({"id":"","title":title,"title_en":"","url":full_url,"opens":"",
-                                 "closes":closes_iso,"status":"Öppen","description":"","category":cat,
+                                 "closes":closes_iso,"status":"Open","description":"","category":cat,
                                  "source":"energimyndigheten"})
                   found += 1
               print(f"Energimyndigheten page {page}: {found} new, total {len(calls)}")
@@ -101,12 +121,6 @@ jobs:
 
           today = datetime.date.today().isoformat()
           BASE = "https://formas.se"
-          SV_MONTHS = {"januari":"01","februari":"02","mars":"03","april":"04","maj":"05",
-                       "juni":"06","juli":"07","augusti":"08","september":"09","oktober":"10",
-                       "november":"11","december":"12"}
-          EN_MONTHS = {"january":"01","february":"02","march":"03","april":"04","may":"05",
-                       "june":"06","july":"07","august":"08","september":"09","october":"10",
-                       "november":"11","december":"12"}
 
           with sync_playwright() as p:
               browser = p.chromium.launch(headless=True)
@@ -137,13 +151,27 @@ jobs:
                   if container.parent: container = container.parent
               ct = container.get_text(" ", strip=True)
               closes_iso = ""
-              for pat in [r"(?:Closes?|Deadline)[:\s]+(\d{1,2})\s+(\w+)\s+(\d{4})",
-                          r"(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})"]:
-                  m = re.search(pat, ct, re.I)
-                  if m:
-                      d, mo_raw, y = m.group(1), m.group(2).lower(), m.group(3)
-                      mo = SV_MONTHS.get(mo_raw) or EN_MONTHS.get(mo_raw, "")
-                      if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"; break
+              # ISO date e.g. 2025-03-15
+              m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", ct)
+              if m:
+                  closes_iso = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+              if not closes_iso:
+                  EN_MONTHS_ABBR = {
+                      "jan":"01","feb":"02","mar":"03","apr":"04","may":"05","jun":"06",
+                      "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12",
+                      "january":"01","february":"02","march":"03","april":"04",
+                      "june":"06","july":"07","august":"08","september":"09",
+                      "october":"10","november":"11","december":"12",
+                  }
+                  for pat in [
+                      r"(?:Application\s+deadline|Deadline|Closes?|Submit\s+by)[:\s]+(\d{1,2})\s+(\w+)\s+(\d{4})",
+                      r"(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})",
+                  ]:
+                      m = re.search(pat, ct, re.I)
+                      if m:
+                          d, mo_raw, y = m.group(1), m.group(2).lower(), m.group(3)
+                          mo = EN_MONTHS_ABBR.get(mo_raw, "")
+                          if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"; break
               if closes_iso and closes_iso < today: continue
               calls.append({"id":"","title":title,"title_en":title,"url":full_url,"opens":"",
                              "closes":closes_iso,"status":"Open","description":"","category":"",
@@ -169,11 +197,7 @@ jobs:
           calls = []
           seen = set()
 
-          # Tillväxtverket lists all calls on one page (with filter options)
-          # We fetch both ongoing and upcoming
-          for url in [
-              f"{BASE}/tillvaxtverket/sokfinansiering/utlysningar.1139.html",
-          ]:
+          for url in [f"{BASE}/tillvaxtverket/sokfinansiering/utlysningar.1139.html"]:
               try:
                   r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0"})
               except Exception as e:
@@ -183,12 +207,10 @@ jobs:
 
               soup = BeautifulSoup(r.text, "lxml")
 
-              # Each call is an <li> containing an <h2> with a link
               for li in soup.select("li"):
                   a = li.find("a", href=True)
                   if not a: continue
                   href = a["href"]
-                  # Only call detail pages
                   if "/utlysningar/" not in href and "/sokfinansiering/utlysningar" not in href: continue
                   full_url = (BASE + href) if href.startswith("/") else href
                   if full_url in seen: continue
@@ -200,15 +222,11 @@ jobs:
 
                   li_text = li.get_text(" ", strip=True)
 
-                  # Status: Pågående = ongoing, Kommande = upcoming, Stängd = closed
                   status_raw = ""
                   for kw in ["Pågående","Kommande","Stängd"]:
                       if kw in li_text: status_raw = kw; break
-
-                  # Skip closed
                   if status_raw == "Stängd": continue
 
-                  # Extract closing date
                   closes_iso = ""
                   for pat in [
                       r"(?:Ansökan\s+stänger|Stänger|Sista\s+ansökningsdag)[:\s]+(\d{1,2})\s+(\w+)\s+(\d{4})",
@@ -222,11 +240,9 @@ jobs:
 
                   if closes_iso and closes_iso < today: continue
 
-                  # EU or national funding
                   is_eu = "EU" in li_text or "eu-flagga" in str(li)
-                  category = "EU-finansierat" if is_eu else "Nationellt stöd"
+                  category = "EU funding" if is_eu else "National funding"
 
-                  # Description snippet
                   p = li.find("p")
                   desc = p.get_text(" ", strip=True)[:300] if p else ""
 
@@ -237,7 +253,7 @@ jobs:
                       "url": full_url,
                       "opens": "",
                       "closes": closes_iso,
-                      "status": status_raw or "Pågående",
+                      "status": "Open" if status_raw == "Pågående" else "Upcoming",
                       "description": desc,
                       "category": category,
                       "source": "tillvaxtverket",
@@ -263,27 +279,38 @@ jobs:
           except Exception as e:
               print(f"Warning: could not parse vinnova_raw.json: {e}")
               calls_v = []
+
           vinnova_calls = []
           for c in calls_v:
+              # Try all known field name variants
               status = (c.get("Status") or c.get("status") or "").strip()
-              closes = c.get("Stanger") or c.get("stanger") or c.get("Slutdatum") or ""
-              opens  = c.get("Oppnar")  or c.get("oppnar")  or c.get("Startdatum") or ""
-              is_open = (
-                  "öppen" in status.lower() or status.lower() in ("open","active","aktiv")
-                  or (closes and closes >= today)
-                  or (not closes and opens and opens <= today)
-              )
-              if not is_open: continue
+              closes = (c.get("Stanger") or c.get("stanger") or
+                        c.get("Slutdatum") or c.get("slutdatum") or
+                        c.get("ClosingDate") or c.get("closingDate") or "")
+              opens  = (c.get("Oppnar") or c.get("oppnar") or
+                        c.get("Startdatum") or c.get("startdatum") or
+                        c.get("OpeningDate") or c.get("openingDate") or "")
+              # Include if: status isn't explicitly closed, OR close date is in the future/missing
+              status_closed = status.lower() in ("stängd", "closed", "stangd", "inaktiv", "inactive")
+              past_close    = bool(closes and closes < today)
+              if status_closed or past_close:
+                  continue
+              title_sv = (c.get("Titel") or c.get("titel") or "").strip()
+              title_en = (c.get("TitelEn") or c.get("titelEn") or c.get("title_en") or "").strip()
               vinnova_calls.append({
-                  "id": c.get("Diarienummer") or c.get("diarienummer") or "",
-                  "title": c.get("Titel") or c.get("titel") or c.get("TitelEn") or "",
-                  "title_en": c.get("TitelEn") or c.get("titelEn") or "",
-                  "url": c.get("Webbadress") or c.get("webbadress") or "",
-                  "opens": opens, "closes": closes, "status": status,
-                  "description": (c.get("Beskrivning") or c.get("beskrivning") or "")[:400],
-                  "category": c.get("Program") or c.get("program") or "",
-                  "source": "vinnova",
+                  "id":          c.get("Diarienummer") or c.get("diarienummer") or "",
+                  "title":       title_en or title_sv,
+                  "title_en":    title_en,
+                  "url":         c.get("Webbadress") or c.get("webbadress") or "",
+                  "opens":       opens,
+                  "closes":      closes,
+                  "status":      "Open",
+                  "description": (c.get("BeskrivningEn") or c.get("Beskrivning") or
+                                  c.get("beskrivning") or "")[:400],
+                  "category":    c.get("Program") or c.get("program") or "",
+                  "source":      "vinnova",
               })
+          print(f"Vinnova raw items: {len(calls_v)}, after filter: {len(vinnova_calls)}")
 
           # ── Other sources (already filtered) ─────────────────────
           def load(fname):
@@ -299,13 +326,13 @@ jobs:
           all_calls.sort(key=lambda x: x["closes"] or "9999-99-99")
 
           out = {
-              "updated":          today,
-              "total_open":       len(all_calls),
-              "vinnova_count":    len(vinnova_calls),
-              "energi_count":     len(energi_calls),
-              "formas_count":     len(formas_calls),
-              "tillvaxt_count":   len(tillvaxt_calls),
-              "calls":            all_calls,
+              "updated":        today,
+              "total_open":     len(all_calls),
+              "vinnova_count":  len(vinnova_calls),
+              "energi_count":   len(energi_calls),
+              "formas_count":   len(formas_calls),
+              "tillvaxt_count": len(tillvaxt_calls),
+              "calls":          all_calls,
           }
           with open("data.json","w",encoding="utf-8") as f:
               json.dump(out, f, ensure_ascii=False, indent=2)
@@ -316,6 +343,41 @@ jobs:
           print(f"  Formas:          {len(formas_calls)}")
           print(f"  Tillväxtverket:  {len(tillvaxt_calls)}")
           print(f"  TOTAL:           {len(all_calls)}")
+          PYEOF
+
+      - name: Translate Swedish titles and descriptions to English
+        run: |
+          python3 - <<'PYEOF'
+          import json, time
+          from deep_translator import GoogleTranslator
+
+          def sv_to_en(text):
+              if not text or not text.strip():
+                  return text
+              try:
+                  return GoogleTranslator(source='sv', target='en').translate(text[:4999])
+              except Exception as e:
+                  print(f"  translate warning: {e}")
+                  return text
+
+          with open("data.json", encoding="utf-8") as f:
+              data = json.load(f)
+
+          translated = 0
+          for call in data["calls"]:
+              if call.get("title_en"):
+                  continue  # already have English title (Vinnova TitelEn, Formas)
+              title_en = sv_to_en(call["title"])
+              desc_en  = sv_to_en(call.get("description",""))
+              call["title_en"]    = title_en
+              call["description"] = desc_en
+              translated += 1
+              time.sleep(0.3)  # stay well within free-tier rate limits
+
+          print(f"✓ Translated {translated} items to English")
+
+          with open("data.json","w",encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
           PYEOF
 
       - name: Commit updated data
