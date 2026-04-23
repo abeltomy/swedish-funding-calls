@@ -16,42 +16,61 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Python deps
-        run: pip install requests beautifulsoup4 lxml playwright deep-translator --quiet
+        run: pip install requests beautifulsoup4 lxml deep-translator --quiet
 
-      - name: Install Playwright browsers
-        run: python -m playwright install chromium --with-deps
-
+      # ── Vinnova ────────────────────────────────────────────────────────────
       - name: Fetch Vinnova API
         run: |
-          HTTP_CODE=$(curl -s -w "%{http_code}" \
-            -H "Accept: application/json" \
-            "https://data.vinnova.se/api/ansokningsomgangar/" \
-            -o vinnova_raw.json)
-          echo "Vinnova HTTP $HTTP_CODE, $(wc -c < vinnova_raw.json) bytes"
-          if [ "$HTTP_CODE" != "200" ] || [ ! -s vinnova_raw.json ]; then
-            echo "[]" > vinnova_raw.json
-            echo "Warning: Vinnova API unavailable (HTTP $HTTP_CODE), using empty fallback"
-          fi
-
-      - name: Debug Vinnova API structure
-        run: |
           python3 - <<'PYEOF'
-          import json
+          import requests, json, datetime
+
+          today = datetime.date.today().isoformat()
           try:
-              with open("vinnova_raw.json", encoding="utf-8") as f:
-                  raw = json.load(f)
-              items = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
-              print(f"Top-level type: {type(raw).__name__}")
-              if isinstance(raw, dict):
-                  print(f"Top-level keys: {list(raw.keys())}")
-              print(f"Total items: {len(items)}")
-              if items:
-                  print("First item keys:", list(items[0].keys()))
-                  print(json.dumps(items[0], indent=2, ensure_ascii=False)[:800])
+              r = requests.get("https://data.vinnova.se/api/ansokningsomgangar/",
+                               headers={"Accept": "application/json"}, timeout=30)
+              r.raise_for_status()
+              raw = r.json()
           except Exception as e:
-              print(f"Debug error: {e}")
+              print(f"Vinnova API error: {e}")
+              raw = []
+
+          items = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
+          print(f"Vinnova raw items: {len(items)}")
+          if items:
+              print("Fields:", list(items[0].keys()))
+
+          calls = []
+          for c in items:
+              closes = (c.get("Stangningsdatum") or "").strip()[:10]
+              opens  = (c.get("Oppningsdatum")   or "").strip()[:10]
+              if closes and closes < today:
+                  continue
+              title_en = (c.get("TitelEngelska") or "").strip()
+              title_sv = (c.get("Titel")         or "").strip()
+              url = ""
+              for lank in (c.get("LankLista") or []):
+                  href = lank.get("Url") or lank.get("url") or lank.get("Lank") or ""
+                  if href:
+                      url = href; break
+              calls.append({
+                  "id":          c.get("Diarienummer") or "",
+                  "title":       title_en or title_sv,
+                  "title_en":    title_en,
+                  "url":         url,
+                  "opens":       opens,
+                  "closes":      closes,
+                  "status":      "Open",
+                  "description": (c.get("BeskrivningEngelska") or c.get("Beskrivning") or "")[:400],
+                  "category":    "",
+                  "source":      "vinnova",
+              })
+
+          with open("vinnova_raw.json", "w", encoding="utf-8") as f:
+              json.dump(calls, f, ensure_ascii=False, indent=2)
+          print(f"✓ Vinnova: {len(calls)} open calls")
           PYEOF
 
+      # ── Energimyndigheten ──────────────────────────────────────────────────
       - name: Scrape Energimyndigheten
         run: |
           python3 - <<'PYEOF'
@@ -59,211 +78,247 @@ jobs:
           from bs4 import BeautifulSoup
 
           today = datetime.date.today().isoformat()
-          BASE  = "https://www.energimyndigheten.se"
+          BASE = "https://www.energimyndigheten.se"
           SV_MONTHS = {"januari":"01","februari":"02","mars":"03","april":"04","maj":"05",
                        "juni":"06","juli":"07","augusti":"08","september":"09","oktober":"10",
                        "november":"11","december":"12"}
-          calls = []
-          seen = set()
+          CATEGORY_MAP = {
+              "Forskningsstöd":               "Research funding",
+              "Affärsutveckling":             "Business development",
+              "Impact Innovation":            "Impact Innovation",
+              "Strategiska innovationsprogram":"Strategic innovation programmes",
+              "Internationella utlysningar":  "International calls",
+              "Tävlingar":                    "Competitions",
+              "Övrigt":                       "Other",
+          }
 
-          for page in range(1, 8):
+          calls = []
+          seen  = set()
+
+          for page in range(1, 10):
               url = f"{BASE}/utlysningar/" if page == 1 else f"{BASE}/utlysningar?page={page}"
               try:
-                  r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0"})
+                  r = requests.get(url, timeout=20, headers={"User-Agent": "Mozilla/5.0"})
               except Exception as e:
                   print(f"Page {page} error: {e}"); break
-              if not r.ok: break
+              if not r.ok:
+                  print(f"Page {page} HTTP {r.status_code}"); break
+
               soup = BeautifulSoup(r.text, "lxml")
-              items = soup.select("a[href*='/utlysningar/']")
               found = 0
-              for a in items:
-                  href = a.get("href","")
-                  if not href or href.rstrip("/") in ("/utlysningar","") or "?" in href or "#" in href: continue
+              for a in soup.select("a[href*='/utlysningar/']"):
+                  href = a.get("href", "")
+                  if not href or href.rstrip("/") in ("/utlysningar", "") \
+                          or "?" in href or "#" in href:
+                      continue
                   full_url = (BASE + href) if href.startswith("/") else href
-                  if full_url in seen: continue
+                  if full_url in seen:
+                      continue
                   seen.add(full_url)
-                  h = a.find(["h1","h2","h3","h4","h5","h6"])
-                  title = h.get_text(" ", strip=True) if h else (a.get_text(" ", strip=True).splitlines()[0].strip())
-                  if not title or len(title) < 8: continue
-                  container = a
-                  for _ in range(4):
-                      if container.parent: container = container.parent
-                  ct = container.get_text(" ", strip=True)
+
+                  h = a.find(["h1", "h2", "h3", "h4"])
+                  if not h:
+                      continue
+                  title = h.get_text(" ", strip=True)
+                  if not title or len(title) < 5:
+                      continue
+
+                  paras = [p.get_text(" ", strip=True) for p in a.find_all("p")]
+                  date_text = paras[0] if paras else ""
+                  cat_sv    = paras[1] if len(paras) > 1 else ""
+                  desc      = paras[2] if len(paras) > 2 else ""
+
                   closes_iso = ""
-                  m = re.search(r"Stänger\s+(\d{1,2})\s+(\w+)\s+(\d{4})", ct, re.I)
+                  m = re.search(r"(\d{1,2})\s+(\w+)\s+(\d{4})", date_text)
                   if m:
                       d, mo_sv, y = m.group(1), m.group(2).lower(), m.group(3)
                       mo = SV_MONTHS.get(mo_sv, "")
-                      if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"
-                  cat = ""
-                  for kw in ["Forskningsstöd","Affärsutveckling","Impact Innovation",
-                              "Strategiska innovationsprogram","Internationella utlysningar","Tävlingar","Övrigt"]:
-                      if kw in ct: cat = kw; break
-                  if closes_iso and closes_iso < today: continue
-                  calls.append({"id":"","title":title,"title_en":"","url":full_url,"opens":"",
-                                 "closes":closes_iso,"status":"Open","description":"","category":cat,
-                                 "source":"energimyndigheten"})
-                  found += 1
-              print(f"Energimyndigheten page {page}: {found} new, total {len(calls)}")
-              if found == 0: break
+                      if mo:
+                          closes_iso = f"{y}-{mo}-{int(d):02d}"
 
-          with open("energi_raw.json","w",encoding="utf-8") as f:
+                  if closes_iso and closes_iso < today:
+                      continue
+
+                  calls.append({
+                      "id":          "",
+                      "title":       title,
+                      "title_en":    "",
+                      "url":         full_url,
+                      "opens":       "",
+                      "closes":      closes_iso,
+                      "status":      "Open",
+                      "description": desc,
+                      "category":    CATEGORY_MAP.get(cat_sv, cat_sv),
+                      "source":      "energimyndigheten",
+                  })
+                  found += 1
+
+              print(f"Energimyndigheten page {page}: {found} new, total {len(calls)}")
+              if found == 0:
+                  break
+
+          with open("energi_raw.json", "w", encoding="utf-8") as f:
               json.dump(calls, f, ensure_ascii=False, indent=2)
           print(f"✓ Energimyndigheten: {len(calls)} open calls")
           PYEOF
 
-      - name: Scrape Formas (headless browser)
+      # ── Formas ────────────────────────────────────────────────────────────
+      - name: Scrape Formas
         run: |
           python3 - <<'PYEOF'
-          import json, re, datetime
-          from playwright.sync_api import sync_playwright
+          import requests, json, re, datetime
           from bs4 import BeautifulSoup
 
-          today = datetime.date.today().isoformat()
-          BASE = "https://formas.se"
+          today   = datetime.date.today().isoformat()
+          BASE    = "https://formas.se"
+          HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-          with sync_playwright() as p:
-              browser = p.chromium.launch(headless=True)
-              page = browser.new_page()
-              page.goto("https://formas.se/en/start-page/apply-for-funding/all-calls.html",
-                        wait_until="networkidle", timeout=30000)
-              try:
-                  page.click("text=Accept all cookies", timeout=5000)
-                  page.wait_for_timeout(1000)
-              except: pass
-              page.wait_for_timeout(3000)
-              html = page.content()
-              browser.close()
+          r = requests.get(f"{BASE}/en/start-page/apply-for-funding/", timeout=20, headers=HEADERS)
+          soup = BeautifulSoup(r.text, "lxml")
 
-          soup = BeautifulSoup(html, "lxml")
-          calls = []
-          seen = set()
+          seen       = set()
+          call_links = []
           for a in soup.find_all("a", href=True):
               href = a["href"]
-              if "/calls/" not in href and "/utlysningar/" not in href: continue
+              if "/all-calls/calls/" not in href:
+                  continue
               full_url = (BASE + href) if href.startswith("/") else href
-              if full_url in seen: continue
+              if full_url in seen:
+                  continue
               seen.add(full_url)
               title = a.get_text(" ", strip=True)
-              if not title or len(title) < 8: continue
-              container = a
-              for _ in range(5):
-                  if container.parent: container = container.parent
-              ct = container.get_text(" ", strip=True)
-              closes_iso = ""
-              # ISO date e.g. 2025-03-15
-              m = re.search(r"\b(\d{4})-(\d{2})-(\d{2})\b", ct)
-              if m:
-                  closes_iso = f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
-              if not closes_iso:
-                  EN_MONTHS_ABBR = {
-                      "jan":"01","feb":"02","mar":"03","apr":"04","may":"05","jun":"06",
-                      "jul":"07","aug":"08","sep":"09","oct":"10","nov":"11","dec":"12",
-                      "january":"01","february":"02","march":"03","april":"04",
-                      "june":"06","july":"07","august":"08","september":"09",
-                      "october":"10","november":"11","december":"12",
-                  }
-                  for pat in [
-                      r"(?:Application\s+deadline|Deadline|Closes?|Submit\s+by)[:\s]+(\d{1,2})\s+(\w+)\s+(\d{4})",
-                      r"(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{4})",
-                  ]:
-                      m = re.search(pat, ct, re.I)
-                      if m:
-                          d, mo_raw, y = m.group(1), m.group(2).lower(), m.group(3)
-                          mo = EN_MONTHS_ABBR.get(mo_raw, "")
-                          if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"; break
-              if closes_iso and closes_iso < today: continue
-              calls.append({"id":"","title":title,"title_en":title,"url":full_url,"opens":"",
-                             "closes":closes_iso,"status":"Open","description":"","category":"",
-                             "source":"formas"})
+              if title and len(title) >= 5:
+                  call_links.append((full_url, title))
 
-          with open("formas_raw.json","w",encoding="utf-8") as f:
+          print(f"Found {len(call_links)} Formas calls")
+
+          calls = []
+          for url, title in call_links:
+              closes_iso = ""
+              try:
+                  dr = requests.get(url, timeout=20, headers=HEADERS)
+                  m = re.search(r"Last\s+day\s+of\s+application[:\s]+(\d{4}-\d{2}-\d{2})", dr.text, re.I)
+                  if m:
+                      closes_iso = m.group(1)
+              except Exception as e:
+                  print(f"  detail error {url}: {e}")
+
+              if closes_iso and closes_iso < today:
+                  continue
+
+              calls.append({
+                  "id":          "",
+                  "title":       title,
+                  "title_en":    title,
+                  "url":         url,
+                  "opens":       "",
+                  "closes":      closes_iso,
+                  "status":      "Open",
+                  "description": "",
+                  "category":    "",
+                  "source":      "formas",
+              })
+
+          with open("formas_raw.json", "w", encoding="utf-8") as f:
               json.dump(calls, f, ensure_ascii=False, indent=2)
           print(f"✓ Formas: {len(calls)} open calls")
           PYEOF
 
+      # ── Tillväxtverket ────────────────────────────────────────────────────
       - name: Scrape Tillväxtverket
         run: |
           python3 - <<'PYEOF'
           import requests, json, re, datetime
           from bs4 import BeautifulSoup
 
-          today = datetime.date.today().isoformat()
-          BASE = "https://tillvaxtverket.se"
+          today   = datetime.date.today().isoformat()
+          BASE    = "https://tillvaxtverket.se"
+          HEADERS = {"User-Agent": "Mozilla/5.0"}
           SV_MONTHS = {"januari":"01","februari":"02","mars":"03","april":"04","maj":"05",
                        "juni":"06","juli":"07","augusti":"08","september":"09","oktober":"10",
                        "november":"11","december":"12"}
 
+          r = requests.get(
+              f"{BASE}/tillvaxtverket/sokfinansiering/utlysningar.1139.html",
+              timeout=20, headers=HEADERS)
+          soup = BeautifulSoup(r.text, "lxml")
+
+          seen       = set()
+          call_links = []
+          for a in soup.find_all("a", href=True):
+              href = a["href"]
+              if "/sokfinansiering/utlysningar/utlysningar/" not in href:
+                  continue
+              full_url = (BASE + href) if href.startswith("/") else href
+              if full_url in seen:
+                  continue
+              seen.add(full_url)
+              container = a
+              for _ in range(4):
+                  if container.parent: container = container.parent
+              ct = container.get_text(" ", strip=True)
+              if "Stängd" in ct:
+                  continue
+              h = a.find(["h3", "h2", "h4"])
+              title = h.get_text(" ", strip=True) if h else a.get_text(" ", strip=True).split("\n")[0].strip()
+              if not title or len(title) < 5:
+                  continue
+              status = "Upcoming" if "Kommande" in ct else "Open"
+              is_eu  = "EU" in ct
+              call_links.append((full_url, title, status, is_eu))
+
+          print(f"Found {len(call_links)} Tillväxtverket calls")
+
           calls = []
-          seen = set()
-
-          for url in [f"{BASE}/tillvaxtverket/sokfinansiering/utlysningar.1139.html"]:
+          for url, title, status, is_eu in call_links:
+              closes_iso = ""
               try:
-                  r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0"})
-              except Exception as e:
-                  print(f"Error: {e}"); continue
-              if not r.ok:
-                  print(f"HTTP {r.status_code}"); continue
-
-              soup = BeautifulSoup(r.text, "lxml")
-
-              for li in soup.select("li"):
-                  a = li.find("a", href=True)
-                  if not a: continue
-                  href = a["href"]
-                  if "/utlysningar/" not in href and "/sokfinansiering/utlysningar" not in href: continue
-                  full_url = (BASE + href) if href.startswith("/") else href
-                  if full_url in seen: continue
-                  seen.add(full_url)
-
-                  h2 = li.find("h2")
-                  title = h2.get_text(" ", strip=True) if h2 else a.get_text(" ", strip=True)
-                  if not title or len(title) < 5: continue
-
-                  li_text = li.get_text(" ", strip=True)
-
-                  status_raw = ""
-                  for kw in ["Pågående","Kommande","Stängd"]:
-                      if kw in li_text: status_raw = kw; break
-                  if status_raw == "Stängd": continue
-
-                  closes_iso = ""
-                  for pat in [
-                      r"(?:Ansökan\s+stänger|Stänger|Sista\s+ansökningsdag)[:\s]+(\d{1,2})\s+(\w+)\s+(\d{4})",
-                      r"(\d{1,2})\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)\s+(\d{4})",
-                  ]:
-                      m = re.search(pat, li_text, re.I)
-                      if m:
+                  dr  = requests.get(url, timeout=20, headers=HEADERS)
+                  txt = dr.text
+                  MONTHS = ("januari|februari|mars|april|maj|juni|juli|"
+                            "augusti|september|oktober|november|december")
+                  # Prefer patterns that are explicitly about closing
+                  patterns = [
+                      rf"stänger\s+den?\s+(\d{{1,2}})\s+({MONTHS})\s+(\d{{4}})",
+                      rf"sista\s+ansökningsdag[^0-9]*(\d{{1,2}})\s+({MONTHS})\s+(\d{{4}})",
+                      rf"stänger\s+(\d{{4}}-\d{{2}}-\d{{2}})",
+                      rf"(\d{{1,2}})\s+({MONTHS})\s+(\d{{4}})",
+                  ]
+                  for pat in patterns:
+                      m = re.search(pat, txt, re.I)
+                      if not m: continue
+                      if "-" in m.group(0) and len(m.groups()) == 1:
+                          closes_iso = m.group(1)
+                      else:
                           d, mo_sv, y = m.group(1), m.group(2).lower(), m.group(3)
                           mo = SV_MONTHS.get(mo_sv, "")
-                          if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"; break
+                          if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"
+                      break
+              except Exception as e:
+                  print(f"  detail error {url}: {e}")
 
-                  if closes_iso and closes_iso < today: continue
+              if closes_iso and closes_iso < today:
+                  continue
 
-                  is_eu = "EU" in li_text or "eu-flagga" in str(li)
-                  category = "EU funding" if is_eu else "National funding"
+              calls.append({
+                  "id":          "",
+                  "title":       title,
+                  "title_en":    "",
+                  "url":         url,
+                  "opens":       "",
+                  "closes":      closes_iso,
+                  "status":      status,
+                  "description": "",
+                  "category":    "EU funding" if is_eu else "National funding",
+                  "source":      "tillvaxtverket",
+              })
 
-                  p = li.find("p")
-                  desc = p.get_text(" ", strip=True)[:300] if p else ""
-
-                  calls.append({
-                      "id": "",
-                      "title": title,
-                      "title_en": "",
-                      "url": full_url,
-                      "opens": "",
-                      "closes": closes_iso,
-                      "status": "Open" if status_raw == "Pågående" else "Upcoming",
-                      "description": desc,
-                      "category": category,
-                      "source": "tillvaxtverket",
-                  })
-
-          with open("tillvaxt_raw.json","w",encoding="utf-8") as f:
+          with open("tillvaxt_raw.json", "w", encoding="utf-8") as f:
               json.dump(calls, f, ensure_ascii=False, indent=2)
-          print(f"✓ Tillväxtverket: {len(calls)} open/upcoming calls")
+          print(f"✓ Tillväxtverket: {len(calls)} calls")
           PYEOF
 
+      # ── Merge ─────────────────────────────────────────────────────────────
       - name: Merge all sources into data.json
         run: |
           python3 - <<'PYEOF'
@@ -271,59 +326,21 @@ jobs:
 
           today = datetime.date.today().isoformat()
 
-          # ── Vinnova ──────────────────────────────────────────────
-          try:
-              with open("vinnova_raw.json", encoding="utf-8") as f:
-                  raw = json.load(f)
-              calls_v = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
-          except Exception as e:
-              print(f"Warning: could not parse vinnova_raw.json: {e}")
-              calls_v = []
-
-          vinnova_calls = []
-          for c in calls_v:
-              # Try all known field name variants
-              status = (c.get("Status") or c.get("status") or "").strip()
-              closes = (c.get("Stanger") or c.get("stanger") or
-                        c.get("Slutdatum") or c.get("slutdatum") or
-                        c.get("ClosingDate") or c.get("closingDate") or "")
-              opens  = (c.get("Oppnar") or c.get("oppnar") or
-                        c.get("Startdatum") or c.get("startdatum") or
-                        c.get("OpeningDate") or c.get("openingDate") or "")
-              # Include if: status isn't explicitly closed, OR close date is in the future/missing
-              status_closed = status.lower() in ("stängd", "closed", "stangd", "inaktiv", "inactive")
-              past_close    = bool(closes and closes < today)
-              if status_closed or past_close:
-                  continue
-              title_sv = (c.get("Titel") or c.get("titel") or "").strip()
-              title_en = (c.get("TitelEn") or c.get("titelEn") or c.get("title_en") or "").strip()
-              vinnova_calls.append({
-                  "id":          c.get("Diarienummer") or c.get("diarienummer") or "",
-                  "title":       title_en or title_sv,
-                  "title_en":    title_en,
-                  "url":         c.get("Webbadress") or c.get("webbadress") or "",
-                  "opens":       opens,
-                  "closes":      closes,
-                  "status":      "Open",
-                  "description": (c.get("BeskrivningEn") or c.get("Beskrivning") or
-                                  c.get("beskrivning") or "")[:400],
-                  "category":    c.get("Program") or c.get("program") or "",
-                  "source":      "vinnova",
-              })
-          print(f"Vinnova raw items: {len(calls_v)}, after filter: {len(vinnova_calls)}")
-
-          # ── Other sources (already filtered) ─────────────────────
           def load(fname):
               try:
-                  with open(fname, encoding="utf-8") as f: return json.load(f)
-              except: return []
+                  with open(fname, encoding="utf-8") as f:
+                      return json.load(f)
+              except Exception as e:
+                  print(f"Warning: {fname}: {e}")
+                  return []
 
+          vinnova_calls  = load("vinnova_raw.json")
           energi_calls   = load("energi_raw.json")
           formas_calls   = load("formas_raw.json")
           tillvaxt_calls = load("tillvaxt_raw.json")
 
           all_calls = vinnova_calls + energi_calls + formas_calls + tillvaxt_calls
-          all_calls.sort(key=lambda x: x["closes"] or "9999-99-99")
+          all_calls.sort(key=lambda x: x.get("closes") or "9999-99-99")
 
           out = {
               "updated":        today,
@@ -334,17 +351,15 @@ jobs:
               "tillvaxt_count": len(tillvaxt_calls),
               "calls":          all_calls,
           }
-          with open("data.json","w",encoding="utf-8") as f:
+          with open("data.json", "w", encoding="utf-8") as f:
               json.dump(out, f, ensure_ascii=False, indent=2)
 
-          print(f"✓ Merged:")
-          print(f"  Vinnova:         {len(vinnova_calls)}")
-          print(f"  Energimyndigh.:  {len(energi_calls)}")
-          print(f"  Formas:          {len(formas_calls)}")
-          print(f"  Tillväxtverket:  {len(tillvaxt_calls)}")
-          print(f"  TOTAL:           {len(all_calls)}")
+          print(f"✓ Vinnova={len(vinnova_calls)} Energi={len(energi_calls)} "
+                f"Formas={len(formas_calls)} Tillväxt={len(tillvaxt_calls)} "
+                f"TOTAL={len(all_calls)}")
           PYEOF
 
+      # ── Translate Swedish titles ───────────────────────────────────────────
       - name: Translate Swedish titles to English
         run: |
           python3 - <<'PYEOF'
@@ -358,21 +373,22 @@ jobs:
           if indices:
               titles = [data["calls"][i]["title"][:499] for i in indices]
               try:
-                  translated = GoogleTranslator(source='sv', target='en').translate_batch(titles)
+                  translated = GoogleTranslator(source="sv", target="en").translate_batch(titles)
                   for i, t in zip(indices, translated):
                       data["calls"][i]["title_en"] = t or data["calls"][i]["title"]
-                  print(f"✓ Translated {len(indices)} titles in one batch call")
+                  print(f"✓ Translated {len(indices)} titles")
               except Exception as e:
-                  print(f"Batch translation failed: {e}")
+                  print(f"Batch translation failed, keeping originals: {e}")
                   for i in indices:
                       data["calls"][i]["title_en"] = data["calls"][i]["title"]
           else:
               print("✓ All titles already in English")
 
-          with open("data.json","w",encoding="utf-8") as f:
+          with open("data.json", "w", encoding="utf-8") as f:
               json.dump(data, f, ensure_ascii=False, indent=2)
           PYEOF
 
+      # ── Commit ────────────────────────────────────────────────────────────
       - name: Commit updated data
         run: |
           git config user.name  "github-actions[bot]"

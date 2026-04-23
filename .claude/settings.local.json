@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:data.vinnova.se)",
+      "WebFetch(domain:www.energimyndigheten.se)",
+      "WebFetch(domain:formas.se)",
+      "WebFetch(domain:tillvaxtverket.se)"
+    ]
+  }
+}
