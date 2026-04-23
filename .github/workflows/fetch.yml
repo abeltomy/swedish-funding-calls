@@ -1,0 +1,318 @@
+name: Fetch Swedish Funding Data
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Python deps
+        run: pip install requests beautifulsoup4 lxml playwright --quiet
+
+      - name: Install Playwright browsers
+        run: python -m playwright install chromium --with-deps
+
+      - name: Fetch Vinnova API
+        run: |
+          curl -s "https://data.vinnova.se/api/ansokningsomgangar/" \
+            -H "Accept: application/json" \
+            -o vinnova_raw.json
+          echo "Vinnova raw: $(wc -c < vinnova_raw.json) bytes"
+
+      - name: Scrape Energimyndigheten
+        run: |
+          python3 - <<'PYEOF'
+          import requests, json, re, datetime
+          from bs4 import BeautifulSoup
+
+          today = datetime.date.today().isoformat()
+          BASE  = "https://www.energimyndigheten.se"
+          SV_MONTHS = {"januari":"01","februari":"02","mars":"03","april":"04","maj":"05",
+                       "juni":"06","juli":"07","augusti":"08","september":"09","oktober":"10",
+                       "november":"11","december":"12"}
+          calls = []
+          seen = set()
+
+          for page in range(1, 8):
+              url = f"{BASE}/utlysningar/" if page == 1 else f"{BASE}/utlysningar?page={page}"
+              try:
+                  r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0"})
+              except Exception as e:
+                  print(f"Page {page} error: {e}"); break
+              if not r.ok: break
+              soup = BeautifulSoup(r.text, "lxml")
+              items = soup.select("a[href*='/utlysningar/']")
+              found = 0
+              for a in items:
+                  href = a.get("href","")
+                  if not href or href.rstrip("/") in ("/utlysningar","") or "?" in href or "#" in href: continue
+                  full_url = (BASE + href) if href.startswith("/") else href
+                  if full_url in seen: continue
+                  seen.add(full_url)
+                  title = a.get_text(" ", strip=True)
+                  if not title or len(title) < 8: continue
+                  container = a
+                  for _ in range(4):
+                      if container.parent: container = container.parent
+                  ct = container.get_text(" ", strip=True)
+                  closes_iso = ""
+                  m = re.search(r"Stänger\s+(\d{1,2})\s+(\w+)\s+(\d{4})", ct, re.I)
+                  if m:
+                      d, mo_sv, y = m.group(1), m.group(2).lower(), m.group(3)
+                      mo = SV_MONTHS.get(mo_sv, "")
+                      if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"
+                  cat = ""
+                  for kw in ["Forskningsstöd","Affärsutveckling","Impact Innovation",
+                              "Strategiska innovationsprogram","Internationella utlysningar","Tävlingar","Övrigt"]:
+                      if kw in ct: cat = kw; break
+                  if closes_iso and closes_iso < today: continue
+                  calls.append({"id":"","title":title,"title_en":"","url":full_url,"opens":"",
+                                 "closes":closes_iso,"status":"Öppen","description":"","category":cat,
+                                 "source":"energimyndigheten"})
+                  found += 1
+              print(f"Energimyndigheten page {page}: {found} new, total {len(calls)}")
+              if found == 0: break
+
+          with open("energi_raw.json","w",encoding="utf-8") as f:
+              json.dump(calls, f, ensure_ascii=False, indent=2)
+          print(f"✓ Energimyndigheten: {len(calls)} open calls")
+          PYEOF
+
+      - name: Scrape Formas (headless browser)
+        run: |
+          python3 - <<'PYEOF'
+          import json, re, datetime
+          from playwright.sync_api import sync_playwright
+          from bs4 import BeautifulSoup
+
+          today = datetime.date.today().isoformat()
+          BASE = "https://formas.se"
+          SV_MONTHS = {"januari":"01","februari":"02","mars":"03","april":"04","maj":"05",
+                       "juni":"06","juli":"07","augusti":"08","september":"09","oktober":"10",
+                       "november":"11","december":"12"}
+          EN_MONTHS = {"january":"01","february":"02","march":"03","april":"04","may":"05",
+                       "june":"06","july":"07","august":"08","september":"09","october":"10",
+                       "november":"11","december":"12"}
+
+          with sync_playwright() as p:
+              browser = p.chromium.launch(headless=True)
+              page = browser.new_page()
+              page.goto("https://formas.se/en/start-page/apply-for-funding/all-calls.html",
+                        wait_until="networkidle", timeout=30000)
+              try:
+                  page.click("text=Accept all cookies", timeout=5000)
+                  page.wait_for_timeout(1000)
+              except: pass
+              page.wait_for_timeout(3000)
+              html = page.content()
+              browser.close()
+
+          soup = BeautifulSoup(html, "lxml")
+          calls = []
+          seen = set()
+          for a in soup.find_all("a", href=True):
+              href = a["href"]
+              if "/calls/" not in href and "/utlysningar/" not in href: continue
+              full_url = (BASE + href) if href.startswith("/") else href
+              if full_url in seen: continue
+              seen.add(full_url)
+              title = a.get_text(" ", strip=True)
+              if not title or len(title) < 8: continue
+              container = a
+              for _ in range(5):
+                  if container.parent: container = container.parent
+              ct = container.get_text(" ", strip=True)
+              closes_iso = ""
+              for pat in [r"(?:Closes?|Deadline)[:\s]+(\d{1,2})\s+(\w+)\s+(\d{4})",
+                          r"(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{4})"]:
+                  m = re.search(pat, ct, re.I)
+                  if m:
+                      d, mo_raw, y = m.group(1), m.group(2).lower(), m.group(3)
+                      mo = SV_MONTHS.get(mo_raw) or EN_MONTHS.get(mo_raw, "")
+                      if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"; break
+              if closes_iso and closes_iso < today: continue
+              calls.append({"id":"","title":title,"title_en":title,"url":full_url,"opens":"",
+                             "closes":closes_iso,"status":"Open","description":"","category":"",
+                             "source":"formas"})
+
+          with open("formas_raw.json","w",encoding="utf-8") as f:
+              json.dump(calls, f, ensure_ascii=False, indent=2)
+          print(f"✓ Formas: {len(calls)} open calls")
+          PYEOF
+
+      - name: Scrape Tillväxtverket
+        run: |
+          python3 - <<'PYEOF'
+          import requests, json, re, datetime
+          from bs4 import BeautifulSoup
+
+          today = datetime.date.today().isoformat()
+          BASE = "https://tillvaxtverket.se"
+          SV_MONTHS = {"januari":"01","februari":"02","mars":"03","april":"04","maj":"05",
+                       "juni":"06","juli":"07","augusti":"08","september":"09","oktober":"10",
+                       "november":"11","december":"12"}
+
+          calls = []
+          seen = set()
+
+          # Tillväxtverket lists all calls on one page (with filter options)
+          # We fetch both ongoing and upcoming
+          for url in [
+              f"{BASE}/tillvaxtverket/sokfinansiering/utlysningar.1139.html",
+          ]:
+              try:
+                  r = requests.get(url, timeout=20, headers={"User-Agent":"Mozilla/5.0"})
+              except Exception as e:
+                  print(f"Error: {e}"); continue
+              if not r.ok:
+                  print(f"HTTP {r.status_code}"); continue
+
+              soup = BeautifulSoup(r.text, "lxml")
+
+              # Each call is an <li> containing an <h2> with a link
+              for li in soup.select("li"):
+                  a = li.find("a", href=True)
+                  if not a: continue
+                  href = a["href"]
+                  # Only call detail pages
+                  if "/utlysningar/" not in href and "/sokfinansiering/utlysningar" not in href: continue
+                  full_url = (BASE + href) if href.startswith("/") else href
+                  if full_url in seen: continue
+                  seen.add(full_url)
+
+                  h2 = li.find("h2")
+                  title = h2.get_text(" ", strip=True) if h2 else a.get_text(" ", strip=True)
+                  if not title or len(title) < 5: continue
+
+                  li_text = li.get_text(" ", strip=True)
+
+                  # Status: Pågående = ongoing, Kommande = upcoming, Stängd = closed
+                  status_raw = ""
+                  for kw in ["Pågående","Kommande","Stängd"]:
+                      if kw in li_text: status_raw = kw; break
+
+                  # Skip closed
+                  if status_raw == "Stängd": continue
+
+                  # Extract closing date
+                  closes_iso = ""
+                  for pat in [
+                      r"(?:Ansökan\s+stänger|Stänger|Sista\s+ansökningsdag)[:\s]+(\d{1,2})\s+(\w+)\s+(\d{4})",
+                      r"(\d{1,2})\s+(januari|februari|mars|april|maj|juni|juli|augusti|september|oktober|november|december)\s+(\d{4})",
+                  ]:
+                      m = re.search(pat, li_text, re.I)
+                      if m:
+                          d, mo_sv, y = m.group(1), m.group(2).lower(), m.group(3)
+                          mo = SV_MONTHS.get(mo_sv, "")
+                          if mo: closes_iso = f"{y}-{mo}-{int(d):02d}"; break
+
+                  if closes_iso and closes_iso < today: continue
+
+                  # EU or national funding
+                  is_eu = "EU" in li_text or "eu-flagga" in str(li)
+                  category = "EU-finansierat" if is_eu else "Nationellt stöd"
+
+                  # Description snippet
+                  p = li.find("p")
+                  desc = p.get_text(" ", strip=True)[:300] if p else ""
+
+                  calls.append({
+                      "id": "",
+                      "title": title,
+                      "title_en": "",
+                      "url": full_url,
+                      "opens": "",
+                      "closes": closes_iso,
+                      "status": status_raw or "Pågående",
+                      "description": desc,
+                      "category": category,
+                      "source": "tillvaxtverket",
+                  })
+
+          with open("tillvaxt_raw.json","w",encoding="utf-8") as f:
+              json.dump(calls, f, ensure_ascii=False, indent=2)
+          print(f"✓ Tillväxtverket: {len(calls)} open/upcoming calls")
+          PYEOF
+
+      - name: Merge all sources into data.json
+        run: |
+          python3 - <<'PYEOF'
+          import json, datetime
+
+          today = datetime.date.today().isoformat()
+
+          # ── Vinnova ──────────────────────────────────────────────
+          with open("vinnova_raw.json", encoding="utf-8") as f:
+              raw = json.load(f)
+          calls_v = raw if isinstance(raw, list) else raw.get("items", raw.get("data", []))
+          vinnova_calls = []
+          for c in calls_v:
+              status = (c.get("Status") or c.get("status") or "").strip()
+              closes = c.get("Stanger") or c.get("stanger") or c.get("Slutdatum") or ""
+              opens  = c.get("Oppnar")  or c.get("oppnar")  or c.get("Startdatum") or ""
+              is_open = (
+                  "öppen" in status.lower() or status.lower() in ("open","active","aktiv")
+                  or (closes and closes >= today)
+                  or (not closes and opens and opens <= today)
+              )
+              if not is_open: continue
+              vinnova_calls.append({
+                  "id": c.get("Diarienummer") or c.get("diarienummer") or "",
+                  "title": c.get("Titel") or c.get("titel") or c.get("TitelEn") or "",
+                  "title_en": c.get("TitelEn") or c.get("titelEn") or "",
+                  "url": c.get("Webbadress") or c.get("webbadress") or "",
+                  "opens": opens, "closes": closes, "status": status,
+                  "description": (c.get("Beskrivning") or c.get("beskrivning") or "")[:400],
+                  "category": c.get("Program") or c.get("program") or "",
+                  "source": "vinnova",
+              })
+
+          # ── Other sources (already filtered) ─────────────────────
+          def load(fname):
+              try:
+                  with open(fname, encoding="utf-8") as f: return json.load(f)
+              except: return []
+
+          energi_calls   = load("energi_raw.json")
+          formas_calls   = load("formas_raw.json")
+          tillvaxt_calls = load("tillvaxt_raw.json")
+
+          all_calls = vinnova_calls + energi_calls + formas_calls + tillvaxt_calls
+          all_calls.sort(key=lambda x: x["closes"] or "9999-99-99")
+
+          out = {
+              "updated":          today,
+              "total_open":       len(all_calls),
+              "vinnova_count":    len(vinnova_calls),
+              "energi_count":     len(energi_calls),
+              "formas_count":     len(formas_calls),
+              "tillvaxt_count":   len(tillvaxt_calls),
+              "calls":            all_calls,
+          }
+          with open("data.json","w",encoding="utf-8") as f:
+              json.dump(out, f, ensure_ascii=False, indent=2)
+
+          print(f"✓ Merged:")
+          print(f"  Vinnova:         {len(vinnova_calls)}")
+          print(f"  Energimyndigh.:  {len(energi_calls)}")
+          print(f"  Formas:          {len(formas_calls)}")
+          print(f"  Tillväxtverket:  {len(tillvaxt_calls)}")
+          print(f"  TOTAL:           {len(all_calls)}")
+          PYEOF
+
+      - name: Commit updated data
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.json vinnova_raw.json energi_raw.json formas_raw.json tillvaxt_raw.json
+          git diff --staged --quiet || git commit -m "chore: update funding data $(date -u +%Y-%m-%d)"
+          git push

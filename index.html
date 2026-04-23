@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Swedish Funding Calls</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      background: #fff;
+      color: #111;
+      padding: 24px;
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .meta {
+      color: #666;
+      font-size: 12px;
+      margin-bottom: 20px;
+    }
+
+    /* ── FILTERS ── */
+    .filters {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #e0e0e0;
+    }
+
+    .filters input[type="search"],
+    .filters select {
+      font-family: inherit;
+      font-size: 13px;
+      padding: 5px 8px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      background: #fff;
+      color: #111;
+      outline: none;
+    }
+    .filters input[type="search"] { width: 220px; }
+    .filters input[type="search"]:focus,
+    .filters select:focus { border-color: #555; }
+
+    .filter-label {
+      font-size: 12px;
+      color: #555;
+      white-space: nowrap;
+    }
+
+    #result-count {
+      margin-left: auto;
+      font-size: 12px;
+      color: #666;
+      white-space: nowrap;
+    }
+
+    /* ── TABLE ── */
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 2px solid #111;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    thead th:hover { background: #f5f5f5; }
+    thead th .sort-icon { margin-left: 4px; opacity: 0.4; font-style: normal; }
+    thead th.sorted .sort-icon { opacity: 1; }
+
+    tbody tr { border-bottom: 1px solid #e8e8e8; }
+    tbody tr:hover { background: #fafafa; }
+
+    td {
+      padding: 8px 10px;
+      vertical-align: top;
+    }
+
+    td.title-cell { max-width: 400px; }
+    td.title-cell a {
+      color: #111;
+      text-decoration: none;
+      font-weight: 500;
+    }
+    td.title-cell a:hover { text-decoration: underline; }
+
+    td.desc-cell {
+      color: #555;
+      max-width: 300px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    td.agency-cell { white-space: nowrap; color: #333; }
+    td.date-cell   { white-space: nowrap; font-variant-numeric: tabular-nums; color: #333; }
+
+    .days-left {
+      font-size: 11px;
+      margin-top: 2px;
+    }
+    .days-left.urgent  { color: #c0392b; font-weight: 600; }
+    .days-left.soon    { color: #b45309; }
+    .days-left.normal  { color: #666; }
+    .days-left.upcoming { color: #1a56db; }
+    .days-left.rolling { color: #777; font-style: italic; }
+
+    .status-tag {
+      display: inline-block;
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 3px;
+      border: 1px solid #ccc;
+      color: #444;
+      background: #f5f5f5;
+    }
+    .status-tag.open     { border-color: #aaa; background: #f0f0f0; }
+    .status-tag.upcoming { border-color: #aac; background: #eef; color: #226; }
+    .status-tag.rolling  { border-color: #aaa; background: #f5f5f5; color: #555; }
+
+    #empty-msg, #loading-msg, #error-msg {
+      padding: 40px 0;
+      text-align: center;
+      color: #666;
+    }
+    #error-msg { color: #c0392b; }
+
+    .spinner {
+      display: inline-block;
+      width: 20px; height: 20px;
+      border: 2px solid #ddd;
+      border-top-color: #555;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+      margin-right: 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<h1>Swedish Funding Calls</h1>
+<p class="meta">
+  Vinnova · Energimyndigheten · Formas · Tillväxtverket —
+  <span id="updated-txt">loading…</span>
+</p>
+
+<div class="filters">
+  <input type="search" id="q" placeholder="Search title…" autocomplete="off" />
+
+  <span class="filter-label">Agency:</span>
+  <select id="agency-filter">
+    <option value="">All agencies</option>
+    <option value="vinnova">Vinnova</option>
+    <option value="energimyndigheten">Energimyndigheten</option>
+    <option value="formas">Formas</option>
+    <option value="tillvaxtverket">Tillväxtverket</option>
+  </select>
+
+  <span class="filter-label">Deadline within:</span>
+  <select id="horizon-filter">
+    <option value="">Any time</option>
+    <option value="14">14 days</option>
+    <option value="30">30 days</option>
+    <option value="60">60 days</option>
+    <option value="90">90 days</option>
+  </select>
+
+  <span class="filter-label">Funding type:</span>
+  <select id="type-filter">
+    <option value="">All types</option>
+    <option value="eu">EU-funded</option>
+    <option value="national">National</option>
+  </select>
+
+  <span id="result-count"></span>
+</div>
+
+<div class="table-wrap">
+  <table id="tbl">
+    <thead>
+      <tr>
+        <th data-col="title">Title <i class="sort-icon">↕</i></th>
+        <th data-col="agency">Agency <i class="sort-icon">↕</i></th>
+        <th data-col="category">Category <i class="sort-icon">↕</i></th>
+        <th data-col="opens">Opens <i class="sort-icon">↕</i></th>
+        <th data-col="closes" class="sorted">Deadline <i class="sort-icon">↑</i></th>
+        <th>Link</th>
+      </tr>
+    </thead>
+    <tbody id="tbody">
+      <tr><td colspan="6" id="loading-msg"><span class="spinner"></span>Loading…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div id="empty-msg" style="display:none">No calls match your filters.</div>
+<div id="error-msg" style="display:none"></div>
+
+<script>
+  const AGENCY_LABELS = {
+    vinnova:           'Vinnova',
+    energimyndigheten: 'Energimyndigheten',
+    formas:            'Formas',
+    tillvaxtverket:    'Tillväxtverket',
+  };
+
+  let allCalls = [];
+  let sortCol  = 'closes';
+  let sortAsc  = true;
+
+  // ── Load ──────────────────────────────────────────────────────────
+  async function load() {
+    try {
+      let data;
+      try {
+        const r = await fetch('./data.json');
+        if (!r.ok) throw new Error();
+        data = await r.json();
+      } catch {
+        const r = await fetch('https://data.vinnova.se/api/ansokningsomgangar/');
+        if (!r.ok) throw new Error('API unreachable');
+        data = processVinnova(await r.json());
+      }
+
+      const today = new Date().toISOString().slice(0, 10);
+
+      allCalls = (data.calls || []).filter(c => {
+        // Drop anything with a closing date in the past
+        if (c.closes && c.closes < today) return false;
+        return true;
+      });
+
+      document.getElementById('updated-txt').textContent =
+        `updated ${data.updated || today}`;
+      document.getElementById('loading-msg')?.remove();
+      render();
+    } catch (err) {
+      document.getElementById('loading-msg')?.remove();
+      const el = document.getElementById('error-msg');
+      el.style.display = 'block';
+      el.textContent = `Failed to load data. Run the GitHub Action first, then reload. (${err.message})`;
+    }
+  }
+
+  function processVinnova(raw) {
+    const today = new Date().toISOString().slice(0, 10);
+    const arr   = Array.isArray(raw) ? raw : (raw.items || raw.data || []);
+    const calls = arr.filter(c => {
+      const s  = (c.Status || c.status || '').toLowerCase();
+      const cl = c.Stanger || c.stanger || '';
+      const op = c.Oppnar  || c.oppnar  || '';
+      return s.includes('öppen') || s === 'open'
+          || (cl && cl >= today)
+          || (!cl && op && op <= today);
+    }).map(c => ({
+      title:       c.Titel || c.TitelEn || '',
+      url:         c.Webbadress || '',
+      opens:       c.Oppnar  || c.oppnar  || '',
+      closes:      c.Stanger || c.stanger || '',
+      description: (c.Beskrivning || '').slice(0, 300),
+      category:    c.Program || '',
+      status:      'open',
+      source:      'vinnova',
+    }));
+    return { updated: today, calls };
+  }
+
+  // ── Render ────────────────────────────────────────────────────────
+  function render() {
+    const q       = document.getElementById('q').value.toLowerCase();
+    const agency  = document.getElementById('agency-filter').value;
+    const horizon = parseInt(document.getElementById('horizon-filter').value) || 0;
+    const ftype   = document.getElementById('type-filter').value;
+    const tbody   = document.getElementById('tbody');
+    const today   = new Date();
+
+    let list = allCalls.filter(c => {
+      if (agency && c.source !== agency) return false;
+
+      if (horizon && c.closes) {
+        const days = Math.ceil((new Date(c.closes) - today) / 86400000);
+        if (days > horizon) return false;
+      }
+
+      if (ftype === 'eu' && !(c.category || '').toLowerCase().includes('eu')) return false;
+      if (ftype === 'national') {
+        const cat = (c.category || '').toLowerCase();
+        if (cat.includes('eu')) return false;
+      }
+
+      if (q) {
+        const text = `${c.title} ${c.description || ''} ${c.category || ''}`.toLowerCase();
+        if (!text.includes(q)) return false;
+      }
+
+      return true;
+    });
+
+    // Sort
+    list.sort((a, b) => {
+      let va = a[sortCol] || '';
+      let vb = b[sortCol] || '';
+      // Null/empty deadlines go to bottom
+      if (sortCol === 'closes') {
+        if (!va && !vb) return 0;
+        if (!va) return 1;
+        if (!vb) return -1;
+      }
+      // Agency label sort
+      if (sortCol === 'agency') {
+        va = AGENCY_LABELS[a.source] || a.source;
+        vb = AGENCY_LABELS[b.source] || b.source;
+      }
+      const cmp = va.localeCompare(vb, 'sv');
+      return sortAsc ? cmp : -cmp;
+    });
+
+    // Update count
+    document.getElementById('result-count').textContent =
+      `${list.length} call${list.length !== 1 ? 's' : ''}`;
+
+    tbody.innerHTML = '';
+    document.getElementById('empty-msg').style.display = list.length ? 'none' : 'block';
+    if (!list.length) return;
+
+    list.forEach(c => {
+      const st   = deriveStatus(c);
+      const days = c.closes ? Math.ceil((new Date(c.closes) - today) / 86400000) : null;
+
+      const daysHtml = (() => {
+        if (st === 'upcoming') return `<div class="days-left upcoming">not yet open</div>`;
+        if (st === 'rolling')  return `<div class="days-left rolling">rolling</div>`;
+        if (days === null)     return '';
+        if (days <= 7)  return `<div class="days-left urgent">${days}d left</div>`;
+        if (days <= 30) return `<div class="days-left soon">${days}d left</div>`;
+        return `<div class="days-left normal">${days}d left</div>`;
+      })();
+
+      const statusTag = (() => {
+        if (st === 'upcoming') return `<span class="status-tag upcoming">Upcoming</span>`;
+        if (st === 'rolling')  return `<span class="status-tag rolling">Rolling</span>`;
+        return `<span class="status-tag open">Open</span>`;
+      })();
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="title-cell">${e(c.title)}</td>
+        <td class="agency-cell">${e(AGENCY_LABELS[c.source] || c.source)}</td>
+        <td class="date-cell">${e(c.category || '—')}</td>
+        <td class="date-cell">${c.opens ? fmtDate(c.opens) : '—'}</td>
+        <td class="date-cell">
+          ${c.closes ? fmtDate(c.closes) : '—'}
+          ${daysHtml}
+        </td>
+        <td>${c.url ? `<a href="${e(c.url)}" target="_blank" rel="noopener">Apply →</a>` : '—'}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  function deriveStatus(c) {
+    const raw = (c.status || '').toLowerCase();
+    if (raw.includes('kommande') || raw.includes('upcoming')) return 'upcoming';
+    if (!c.closes) return 'rolling';
+    return 'open';
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d} ${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m-1]} ${y}`;
+  }
+
+  function e(s) {
+    return String(s)
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // ── Column sort ───────────────────────────────────────────────────
+  document.querySelectorAll('thead th[data-col]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortCol === col) sortAsc = !sortAsc;
+      else { sortCol = col; sortAsc = true; }
+
+      document.querySelectorAll('thead th').forEach(t => {
+        t.classList.remove('sorted');
+        t.querySelector('.sort-icon').textContent = '↕';
+      });
+      th.classList.add('sorted');
+      th.querySelector('.sort-icon').textContent = sortAsc ? '↑' : '↓';
+      render();
+    });
+  });
+
+  // ── Filter listeners ──────────────────────────────────────────────
+  ['q','agency-filter','horizon-filter','type-filter'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener(id === 'q' ? 'input' : 'change', render);
+  });
+
+  load();
+</script>
+</body>
+</html>
