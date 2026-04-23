@@ -34,8 +34,14 @@ jobs:
           today = datetime.date.today().isoformat()
           raw = []
           try:
-              with open("vinnova_api.json", encoding="utf-8") as f:
-                  raw = json.load(f)
+              raw_bytes = open("vinnova_api.json", "rb").read()
+              print(f"First 80 bytes: {raw_bytes[:80]}")
+              # Handle gzip if curl didn't decompress
+              if raw_bytes[:2] == b'\x1f\x8b':
+                  import gzip
+                  raw_bytes = gzip.decompress(raw_bytes)
+              text = raw_bytes.decode("utf-8-sig")  # strips BOM if present
+              raw = json.loads(text)
           except Exception as e:
               print(f"Vinnova parse error: {e}")
               raw = []
